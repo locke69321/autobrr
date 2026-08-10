@@ -82,6 +82,38 @@ func TestIndexerRepo_Update(t *testing.T) {
 	}
 }
 
+func TestIndexerRepo_UpdateSettings(t *testing.T) {
+	for dbType, db := range testDBs {
+		log := setupLoggerForTest()
+		repo := NewIndexerRepo(log, db)
+		mockData := getMockIndexer()
+
+		t.Run(fmt.Sprintf("UpdateSettings_Succeeds [%s]", dbType), func(t *testing.T) {
+			// Setup
+			createdIndexer, err := repo.Store(context.Background(), mockData)
+			assert.NoError(t, err)
+
+			// Execute
+			settings := map[string]string{"cookie": "mam_id=rotated;"}
+			err = repo.UpdateSettings(context.Background(), createdIndexer.ID, settings)
+			assert.NoError(t, err)
+
+			// Verify
+			indexer, err := repo.FindByID(context.Background(), int(createdIndexer.ID))
+			assert.NoError(t, err)
+			assert.Equal(t, settings, indexer.Settings)
+
+			// Cleanup
+			_ = repo.Delete(context.Background(), int(createdIndexer.ID))
+		})
+
+		t.Run(fmt.Sprintf("UpdateSettings_NonExistent_Fails [%s]", dbType), func(t *testing.T) {
+			err := repo.UpdateSettings(context.Background(), -1, map[string]string{"cookie": "mam_id=rotated;"})
+			assert.ErrorIs(t, err, domain.ErrUpdateFailed)
+		})
+	}
+}
+
 func TestIndexerRepo_List(t *testing.T) {
 	for dbType, db := range testDBs {
 		log := setupLoggerForTest()

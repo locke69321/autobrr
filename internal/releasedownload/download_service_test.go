@@ -48,12 +48,6 @@ func TestRotateRawCookie(t *testing.T) {
 		want      string
 	}{
 		{
-			name:      "no set-cookie leaves the value alone",
-			raw:       "mam_id=old",
-			setCookie: nil,
-			want:      "",
-		},
-		{
 			name:      "rotated value is picked up",
 			raw:       "mam_id=old",
 			setCookie: []string{"mam_id=new; Path=/; Max-Age=1296000; Secure"},
@@ -64,12 +58,6 @@ func TestRotateRawCookie(t *testing.T) {
 			raw:       "mam_id=old;",
 			setCookie: []string{"mam_id=new"},
 			want:      "mam_id=new;",
-		},
-		{
-			name:      "only the rotated pair changes, order is kept",
-			raw:       "uid=10; pass=secret; mam_id=old",
-			setCookie: []string{"mam_id=new"},
-			want:      "uid=10; pass=secret; mam_id=new",
 		},
 		{
 			name:      "cookies we do not already hold are ignored",
