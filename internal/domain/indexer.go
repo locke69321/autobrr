@@ -115,7 +115,7 @@ type IndexerDefinition struct {
 	// CookieRotation marks indexers that re-issue their session cookie on every
 	// response, so autobrr persists the rotated value instead of letting the
 	// user's original one expire. Opt-in: only set it where it's known to apply.
-	CookieRotation bool `json:"cookierotation,omitempty"`
+	CookieRotation bool `json:"cookie_rotation,omitempty"`
 }
 
 func (i *IndexerDefinition) Prepare() {
