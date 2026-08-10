@@ -13,12 +13,13 @@ supports:
   - irc
   - rss
 # source: custom
+cookierotation: true
 settings:
   - name: cookie
     type: secret
     required: true
     label: Cookie (mam_id)
-    help: "Under your username, go to preferences then security and generate a session using the IP address Autobrr runs on. Changes monthly. Format mam_id=$ID;"
+    help: "Under your username, go to preferences then security and generate a session using the IP address Autobrr runs on. Autobrr stores the refreshed session it gets back on every download, so this only needs replacing if it goes 15 days without one. Format mam_id=$ID;"
 
 irc:
   network: MyAnonamouse

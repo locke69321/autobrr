@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -48,6 +49,7 @@ type proxyService interface {
 
 type indexerRepo interface {
 	FindByID(ctx context.Context, id int) (*domain.Indexer, error)
+	UpdateSettings(ctx context.Context, id int64, settings map[string]string) error
 }
 
 type DownloadService struct {
@@ -156,6 +158,15 @@ func (s *DownloadService) downloadTorrentFile(ctx context.Context, indexer *doma
 		httpClient = proxiedClient
 	}
 
+	// A rotating indexer re-issues its cookie on every response, so the value
+	// stored on the indexer is newer than the one copied onto the release when
+	// the announce was parsed.
+	if r.RotateCookie {
+		if cookie := indexer.Settings["cookie"]; cookie != "" {
+			r.RawCookie = cookie
+		}
+	}
+
 	if r.RawCookie != "" {
 		jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 		if err != nil {
@@ -169,7 +180,7 @@ func (s *DownloadService) downloadTorrentFile(ctx context.Context, indexer *doma
 	}
 
 	errFunc := retry.Do(
-		retryableRequest(httpClient, req, r),
+		retryableRequest(httpClient, req, r, s.rotationHook(ctx, indexer, r)),
 		retry.Attempts(3),
 		retry.MaxJitter(time.Second*1),
 		//retry.Delay(time.Second*3),
@@ -190,7 +201,100 @@ func (s *DownloadService) downloadTorrentFile(ctx context.Context, indexer *doma
 	return errFunc
 }
 
-func retryableRequest(httpClient *http.Client, req *http.Request, r *domain.Release) func() error {
+// rotationHook returns a callback that persists a re-issued session cookie, or
+// nil for indexers that do not rotate.
+func (s *DownloadService) rotationHook(ctx context.Context, indexer *domain.Indexer, r *domain.Release) func(*http.Response) {
+	if !r.RotateCookie || r.RawCookie == "" {
+		return nil
+	}
+
+	// the download context is cancelled as soon as the caller is done with the
+	// release, which must not abort persisting a cookie we already received
+	ctx = context.WithoutCancel(ctx)
+
+	return func(resp *http.Response) {
+		rotated := rotateRawCookie(r.RawCookie, resp)
+		if rotated == "" {
+			return
+		}
+
+		settings := maps.Clone(indexer.Settings)
+		if settings == nil {
+			settings = make(map[string]string)
+		}
+		settings["cookie"] = rotated
+
+		if err := s.indexerRepo.UpdateSettings(ctx, indexer.ID, settings); err != nil {
+			s.log.Error().Err(err).Str("indexer", indexer.Identifier).Msg("could not store rotated session cookie")
+			return
+		}
+
+		indexer.Settings = settings
+		r.RawCookie = rotated
+
+		s.log.Debug().Str("indexer", indexer.Identifier).Msg("stored rotated session cookie")
+	}
+}
+
+// rotateRawCookie returns raw with the values the response re-issued, or an
+// empty string when nothing changed. Only names already present in raw are
+// updated, so a response can never add cookies to what we store. A trailing
+// semicolon is kept because trackers document that format to users.
+func rotateRawCookie(raw string, resp *http.Response) string {
+	if raw == "" {
+		return ""
+	}
+
+	issued := resp.Cookies()
+	if len(issued) == 0 {
+		return ""
+	}
+
+	latest := make(map[string]string, len(issued))
+	for _, c := range issued {
+		// an expiring cookie carries an empty value, which must never replace a
+		// working credential
+		if c.Value == "" {
+			continue
+		}
+
+		latest[c.Name] = c.Value
+	}
+
+	parts := strings.Split(raw, ";")
+	updated := make([]string, 0, len(parts))
+	changed := false
+
+	for _, part := range parts {
+		pair := strings.TrimSpace(part)
+		if pair == "" {
+			continue
+		}
+
+		if name, value, found := strings.Cut(pair, "="); found {
+			name = strings.TrimSpace(name)
+			if v, ok := latest[name]; ok && v != value {
+				pair = name + "=" + v
+				changed = true
+			}
+		}
+
+		updated = append(updated, pair)
+	}
+
+	if !changed {
+		return ""
+	}
+
+	rotated := strings.Join(updated, "; ")
+	if strings.HasSuffix(strings.TrimSpace(raw), ";") {
+		rotated += ";"
+	}
+
+	return rotated
+}
+
+func retryableRequest(httpClient *http.Client, req *http.Request, r *domain.Release, onSuccess func(*http.Response)) func() error {
 	return func() error {
 		// Get the data
 		resp, err := httpClient.Do(req)
@@ -213,7 +317,6 @@ func retryableRequest(httpClient *http.Client, req *http.Request, r *domain.Rele
 		switch resp.StatusCode {
 		case http.StatusOK:
 			// Continue processing the response
-			break
 
 		//case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
 		//	// Handle redirect
@@ -306,6 +409,12 @@ func retryableRequest(httpClient *http.Client, req *http.Request, r *domain.Rele
 		// announce-derived size rather than storing a wrapped uint64.
 		if size := torrentMetaInfo.TotalLength(); size > 0 {
 			r.Size = uint64(size)
+		}
+
+		// only once the body decoded as a torrent do we know the session was
+		// accepted, so a login page served as 200 cannot replace a working cookie
+		if onSuccess != nil {
+			onSuccess(resp)
 		}
 
 		return nil

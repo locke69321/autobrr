@@ -112,6 +112,10 @@ type IndexerDefinition struct {
 	SettingsMap        map[string]string     `json:"-"`
 	IRC                *IndexerIRCV2         `json:"irc,omitempty"`
 	Feed               *FeedSettings         `json:"feed,omitempty"`
+	// CookieRotation marks indexers that re-issue their session cookie on every
+	// response, so autobrr persists the rotated value instead of letting the
+	// user's original one expire. Opt-in: only set it where it's known to apply.
+	CookieRotation bool `json:"cookierotation,omitempty"`
 }
 
 func (i *IndexerDefinition) Prepare() {
@@ -711,6 +715,7 @@ func (p *IndexerIRCV2Parse) Parse(def *IndexerDefinition, channelName string, va
 
 	if v, ok := def.SettingsMap["cookie"]; ok {
 		rls.RawCookie = v
+		rls.RotateCookie = def.CookieRotation
 	}
 
 	return nil

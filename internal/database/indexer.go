@@ -88,6 +88,42 @@ func (r *IndexerRepo) Update(ctx context.Context, indexer domain.Indexer) (*doma
 	return &indexer, nil
 }
 
+// UpdateSettings writes only the settings column, leaving the columns a user
+// can edit in the UI untouched so a concurrent save is not clobbered.
+func (r *IndexerRepo) UpdateSettings(ctx context.Context, id int64, indexerSettings map[string]string) error {
+	settings, err := json.Marshal(indexerSettings)
+	if err != nil {
+		return errors.Wrap(err, "error marshaling json data")
+	}
+
+	queryBuilder := r.db.squirrel.
+		Update("indexer").
+		Set("settings", settings).
+		Set("updated_at", time.Now().Format(time.RFC3339)).
+		Where(sq.Eq{"id": id})
+
+	query, args, err := queryBuilder.ToSql()
+	if err != nil {
+		return errors.Wrap(err, "error building query")
+	}
+
+	result, err := r.db.Handler.ExecContext(ctx, query, args...)
+	if err != nil {
+		return errors.Wrap(err, "error executing query")
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return errors.Wrap(err, "error rows affected")
+	}
+
+	if rowsAffected == 0 {
+		return domain.ErrUpdateFailed
+	}
+
+	return nil
+}
+
 func (r *IndexerRepo) List(ctx context.Context) ([]domain.Indexer, error) {
 	queryBuilder := r.db.squirrel.
 		Select("id", "enabled", "name", "identifier", "identifier_external", "implementation", "base_url", "use_proxy", "proxy_id", "settings").

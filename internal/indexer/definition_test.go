@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestIndexerYamlCookieRotation(t *testing.T) {
+	t.Parallel()
+	s := &Service{definitions: map[string]domain.IndexerDefinition{}}
+	assert.NoError(t, s.LoadIndexerDefinitions())
+
+	assert.True(t, s.definitions["myanonamouse"].CookieRotation, "myanonamouse re-issues its session cookie on every response")
+}
+
 func TestIndexerYamlExpectations(t *testing.T) {
 	t.Parallel()
 	s := &Service{definitions: map[string]domain.IndexerDefinition{}}
